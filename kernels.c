@@ -34,6 +34,7 @@ feature_t aggregation (graph_t graph_c, feature_t in_feature_c) {
 		for (k = 0; k < in_feature_c.feature_num; ++k) {
 			// sum of all the values in the in_feature edge connections to out_features
 			for (j = graph_c.indexes[i]; j < graph_c.indexes[i + 1]; ++j) {
+				// Change to a adjacency matrix and perform row by operations
 				out_feature_c.features[k][i] += in_feature_c.features[k][graph_c.neighbours[j]];
 			}
 			// Divide by the differences in the indexes for nodes
