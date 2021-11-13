@@ -45,7 +45,7 @@ feature_t aggregation (graph_t graph_c, feature_t in_feature_c) {
 
 	return out_feature_c;
 }
-
+// CUDA CODE FOR THIS SECTION
 feature_t combination (feature_t in_feature_c, parameter_t parameter_c, bool relu) {
 	int i, j, k;
 	feature_t out_feature_c;
