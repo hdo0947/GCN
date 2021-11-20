@@ -46,6 +46,36 @@ feature_t aggregation (graph_t graph_c, feature_t in_feature_c) {
 	return out_feature_c;
 }
 // CUDA CODE FOR THIS SECTION
+
+
+__global__ void combination(feature_t in_feature_c, feature_t out_feature_c, parameter_t parameter_c, bool relu){
+	int i,j,k;
+	// Keep the same checks as before
+	if (in_feature_c.feature_num != parameter_c.in_feature_num) {
+    	printf("ERROR: Incompatible number of features in feature (%d) and parameter (%d) objects!\n", in_feature_c.feature_num, parameter_c.in_feature_num);
+    	exit(-1);
+	}
+	// set values of the out_feature_c
+	out_feature_c.node_num = in_feature_c.node_num;
+	out_feature_c.feature_num = parameter_c.out_feature_num;
+	//out_feature_c.features = (float**) malloc (parameter_c.out_feature_num * sizeof(float*));
+	
+	// Declare shared Variable to reduce global reads and writes
+	// One thing to do is we need the value in the numCol to be max of in_feature_c.node_num
+	__shared__ features [parameter_c.out_feature_num][max(in_feature_c.node_num)];
+	
+	int col = blockIdx.x * blockDim.x + threadIdx.x;
+    	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	
+	features[row][col] =  parameter_c.biasses[j];
+	// We only read in in_feature once, no need for shared memory
+	// parameter_c.weights could be stored in shared memory as well... 
+	//one of the various test could be shared vs. global for the in_features and parameter
+	out_feature_c.features[row][col] += in_feature_c.features[k][i] * parameter_c.weights[k][j];
+	
+	out_feature_c.features = features
+}
+
 feature_t combination (feature_t in_feature_c, parameter_t parameter_c, bool relu) {
 	int i, j, k;
 	feature_t out_feature_c;
