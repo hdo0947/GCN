@@ -62,6 +62,8 @@ __global__ void combination(feature_t in_feature_c, feature_t out_feature_c, par
 	
 	// Declare shared Variable to reduce global reads and writes
 	// One thing to do is we need the value in the numCol to be max of in_feature_c.node_num
+	int numRow = parameter_c.out_feature_num;
+	int numCol = max(in_feature_c.node_num;
 	__shared__ features [parameter_c.out_feature_num][max(in_feature_c.node_num)];
 	
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -71,9 +73,16 @@ __global__ void combination(feature_t in_feature_c, feature_t out_feature_c, par
 	// We only read in in_feature once, no need for shared memory
 	// parameter_c.weights could be stored in shared memory as well... 
 	//one of the various test could be shared vs. global for the in_features and parameter
-	out_feature_c.features[row][col] += in_feature_c.features[k][i] * parameter_c.weights[k][j];
+	if( row < numRow && col < numCol){
+		// Possibly Atomic Add?
+		out_feature_c.features[row][col] += in_feature_c.features[k][col] * parameter_c.weights[k][row];
 	
-	out_feature_c.features = features
+		out_feature_c.features = features;
+			
+		if(relu)
+				out_feature_c.features[row][col] = MAX(0.00000, out_feature_c.features[row][col]);
+		
+	}
 }
 
 feature_t combination (feature_t in_feature_c, parameter_t parameter_c, bool relu) {
