@@ -15,4 +15,6 @@ cmake ..
 make -j4
 cd ../
 
+nvcc kernels_hj.cu -L$PWD/_build -lGCNlib -I$PWD -o $PWD/_build/GCN
+
 echo "Successfully built"

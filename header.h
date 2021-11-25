@@ -6,9 +6,13 @@
 #include <string.h>
 #include <stdbool.h>
 #include <math.h>
+#include <sys/types.h>
+#include <ctime>
+#include <chrono>
+
 
 #define DEBUG false
-#define DATASET_DIR "/scratch/eecs498f21_class_root/eecs498f21_class/shared_data/GCN-gpu/"
+#define DATASET_DIR "/home/huijie/research/EECS598/GCN/GCN_data/"
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) < (Y)) ? (Y) : (X))
 
