@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <iostream>
 #include <math.h>
 #include <sys/types.h>
 #include <ctime>
@@ -13,6 +14,7 @@
 
 #define DEBUG false
 #define DATASET_DIR "/home/huijie/research/EECS598/GCN/GCN_data/"
+// #define DATASET_DIR "/home/yuzren/Desktop/GCN/GCN_data/"
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) < (Y)) ? (Y) : (X))
 
