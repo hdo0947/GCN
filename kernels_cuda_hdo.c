@@ -64,23 +64,28 @@ __global__ void combination(feature_t in_feature_c, feature_t out_feature_c, par
 	// One thing to do is we need the value in the numCol to be max of in_feature_c.node_num
 	int numRow = parameter_c.out_feature_num;
 	int numCol = max(in_feature_c.node_num;
-	__shared__ features [parameter_c.out_feature_num][max(in_feature_c.node_num)];
+	int k = parameter_c.in_feature_num;
+	__shared__ out_features [numRow][numCol];
+	// in-feature will be read in # row times in the overall combination
+	__shared__ in_features [k][numCol];
+	// parameter will be called # column number of times
+	__shared__ features [k][numRow];
+	
 	
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
     	int row = blockIdx.y * blockDim.y + threadIdx.y;
 	
 	features[row][col] =  parameter_c.biasses[j];
-	// We only read in in_feature once, no need for shared memory
-	// parameter_c.weights could be stored in shared memory as well... 
-	//one of the various test could be shared vs. global for the in_features and parameter
+			 
 	if( row < numRow && col < numCol){
-		// Possibly Atomic Add?
+		// Consider matrix kernel multiplication methods, since we can read in whole rows at a time
 		out_feature_c.features[row][col] += in_feature_c.features[k][col] * parameter_c.weights[k][row];
 	
 		out_feature_c.features = features;
-			
+		
+		__syncthreads();
 		if(relu)
-				out_feature_c.features[row][col] = MAX(0.00000, out_feature_c.features[row][col]);
+			out_feature_c.features[row][col] = MAX(0.00000, out_feature_c.features[row][col]);
 		
 	}
 }
@@ -112,7 +117,7 @@ feature_t combination (feature_t in_feature_c, parameter_t parameter_c, bool rel
 	    fflush(stdout);
 		for (j = 0; j < parameter_c.out_feature_num; ++j) {
 			out_feature_c.features[j][i] = parameter_c.biasses[j];
-			// Unlike aggregation, no division afterword needed
+			// Unlike aggregation, no division afterward needed
 			for (k = 0; k < parameter_c.in_feature_num; ++k) {
 				out_feature_c.features[j][i] += in_feature_c.features[k][i] * parameter_c.weights[k][j];
 			}
