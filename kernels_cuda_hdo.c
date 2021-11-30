@@ -46,48 +46,51 @@ feature_t aggregation (graph_t graph_c, feature_t in_feature_c) {
 	return out_feature_c;
 }
 // CUDA CODE FOR THIS SECTION
-
-
-__global__ void combination(feature_t in_feature_c, feature_t out_feature_c, parameter_t parameter_c, bool relu){
+// The features and parpameters are dismantled so they can be read in for CUDA
+__global__ void combination_v0( float* &in_features, int &in_feature_num, int &in_node_num, //feature_t in_feature
+			     float* &out_features, int &out_feature_num, int &out_node_num, //feature_t out_feature
+			     float* &biases, float* &weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
+			     bool relu){
 	int i,j,k;
 	// Keep the same checks as before
-	if (in_feature_c.feature_num != parameter_c.in_feature_num) {
-    		printf("ERROR: Incompatible number of features in feature (%d) and parameter (%d) objects!\n", in_feature_c.feature_num, parameter_c.in_feature_num);
+	if (in_feature_num != in_feature_num_p) {
+    		printf("ERROR: Incompatible number of features in feature (%d) and parameter (%d) objects!\n", in_feature_num, in_feature_num_p);
     		exit(-1);
 	}
 	// set values of the out_feature_c
-	out_feature_c.node_num = in_feature_c.node_num;
-	out_feature_c.feature_num = parameter_c.out_feature_num;
+	out_feature_num = out_feature_num_p;
+	out_node_num = in_node_num;
 	//out_feature_c.features = (float**) malloc (parameter_c.out_feature_num * sizeof(float*));
 	
-	// Declare shared Variable to reduce global reads and writes
-	// One thing to do is we need the value in the numCol to be max of in_feature_c.node_num
-	int numRow = parameter_c.out_feature_num;
-	int numCol = max(in_feature_c.node_num);
-	int k = parameter_c.in_feature_num;
+	/*
+	--------------------Not for v0---------------
 	__shared__ out_features [numRow][numCol];
 	// in-feature will be read in # row times in the overall combination
 	__shared__ in_features [k][numCol];
 	// parameter will be called # column number of times
 	__shared__ features [k][numRow];
 	// K will work like the TILESIZE in matrix multiplication?
-	
-	int col = blockIdx.x * blockDim.x + threadIdx.x;
-    	int row = blockIdx.y * blockDim.y + threadIdx.y;
+	--------------------Not for v0---------------
+	*/
+	// TILESIZE == blocksize == 16
+	int col = blockIdx.x * TILED_SIZE + threadIdx.x;
+    	int row = blockIdx.y * TILED_SIZE + threadIdx.y;
 	
 	// Single read in of biases, no need for shared mem
-	features[row][col] =  parameter_c.biasses[row];
+	out_features[row * out_node_num + col] =  parameter_c.biasses[row];
 			 
 	if( row < numRow && col < numCol){
 		// Consider matrix kernel multiplication methods, since we can read in whole rows at a time
-		out_features[row][col] += in_features[k][col] * parameters[k][row];
-		
+		for(int k = 0; k < in_feature_num_p; ++l){
+			// atomic add
+			out_features[row * out_node_num + col] += in_features[k * out_node_num + col] * parameters[k * out_node_num + row];
+		}
 		__syncthreads();
 		if(relu)
-			out_features[row][col] = MAX(0.00000, out_features[row][col]);
+			out_features[row * out_node_num + col] = MAX(0.00000, out_features[row * out_node_num + col]);
 		
 	}
-	out_feature_c.features = features;
+
 }
 
 feature_t combination (feature_t in_feature_c, parameter_t parameter_c, bool relu) {
