@@ -17,6 +17,34 @@ __global__ void aggregation_cuda_v0(float* inputfeature, float* outputfeature, i
 	} 
 }
 
+__global__ void analyzer_cuda_v0(float* inputfeature, int* label, int feature_num, int node_num, int* correctness){
+	int bx = blockIdx.x; int by = blockIdx.y;
+	int tx = threadIdx.x; int ty = threadIdx.y; 
+	// x is feature dimension
+	// y is node dimension 
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;	
+	if (index_y < node_num){
+		correctness[index_y] = 1;
+		
+	}
+	__syncthreads();
+	if (index_x < feature_num && index_y < node_num){
+		if (index_x == 0 && index_y == 1){
+			// printf("The input featuer is %f, the label feature is %f\n", 
+			// 		inputfeature[index_x * node_num + index_y], 
+			// 		label[index_y] * node_num + index_y);
+		}
+		if (inputfeature[index_x * node_num + index_y] > inputfeature[label[index_y] * node_num + index_y]){
+			correctness[index_y] = 0;
+		}
+	}
+	__syncthreads();
+	// if (index_x == 0 && correctness[index_y] == 1){
+	// 	printf("The output correctness is %d for node index %d\n", correctness[index_y], index_y);
+	// }
+}
+
 bool verified_feature(float* feature_device, float** feature_host_true, int feature_num, int node_num){
 	float* feature_host = (float *) malloc (feature_num * node_num * sizeof(float));
 	cudaMemcpy(feature_host, feature_device, feature_num * node_num * sizeof(float), cudaMemcpyDeviceToHost);
@@ -87,7 +115,7 @@ int main(int argc, char const *argv[]) {
 	started = std::chrono::high_resolution_clock::now();
 	feature_c = aggregation(GCN_c.graph_c, GCN_c.feature_c);
 	done = std::chrono::high_resolution_clock::now();
-	printf("Time cost for CPU version of fisrt aggregation is %d nanoseconds. \n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
+	printf("Time cost for CPU version of fisrt aggregation is %d nanoseconds. \n\n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
 
 	std::cout << "The GPU version v0 of aggregation result is " << 
 			  verified_feature(outputfeatures_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
@@ -102,8 +130,28 @@ int main(int argc, char const *argv[]) {
 	started = std::chrono::high_resolution_clock::now();
 	feature_c = combination(feature_c, GCN_c.l1_parameter_c, true);
 	done = std::chrono::high_resolution_clock::now();
-	printf("Time cost for CPU version of fisrt combination is %d nanoseconds. \n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
+	printf("Time cost for CPU version of fisrt combination is %d nanoseconds. \n\n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
+
+	/////////////////////////// Test Analyzer //////////////////////////////////////
+	int* correctness;
+	int* label_device;
+	cudaMalloc((int**)&correctness, sizeof(int) * GCN_c.feature_c.node_num);
+	cudaMalloc((int**)&label_device, sizeof(int) * GCN_c.feature_c.node_num);
+	cudaMemcpy(label_device, GCN_c.label_c, sizeof(int) * GCN_c.feature_c.node_num, cudaMemcpyHostToDevice);
+	// CUDA version
+	started = std::chrono::high_resolution_clock::now();
+	analyzer_cuda_v0<<<gridDim, blockDim>>>(inputfeatures_device, 
+											label_device, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, 
+											correctness);
+	cudaDeviceSynchronize();
+	done = std::chrono::high_resolution_clock::now();
+	printf("Time cost for GPU version v0 of analyzer is %d nanoseconds. \n\n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
 
 
+	// CPU version
+	started = std::chrono::high_resolution_clock::now();
+	analyzer(feature_c, GCN_c.label_c);
+	done = std::chrono::high_resolution_clock::now();
+	printf("Time cost for CPU version of analyzer is %d nanoseconds. \n\n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
 	return 0;
 }
