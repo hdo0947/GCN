@@ -77,13 +77,13 @@ __global__ void combination_v0( float* &in_features, int &in_feature_num, int &i
     	int row = blockIdx.y * TILED_SIZE + threadIdx.y;
 	
 	// Single read in of biases, no need for shared mem
-	out_features[row * out_node_num + col] =  parameter_c.biasses[row];
+	out_features[row * out_node_num + col] =  biases[row];
 			 
 	if( row < numRow && col < numCol){
 		// Consider matrix kernel multiplication methods, since we can read in whole rows at a time
 		for(int k = 0; k < in_feature_num_p; ++l){
 			// atomic add for future versions
-			out_features[row * out_node_num + col] += in_features[k * out_node_num + col] * parameters[k * out_node_num + row];
+			out_features[row * out_node_num + col] += in_features[k * out_node_num + col] * weights[k * out_node_num + row];
 		}
 		__syncthreads();
 		if(relu)
