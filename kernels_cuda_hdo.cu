@@ -143,16 +143,20 @@ __global__ void combination_v1( float* &in_features, int in_feature_num, int in_
 		    weight[ty][tx] = 0.0f;
 		__syncthreads();
 		// ith column of in with jth column of weight is the (j,i) of the out_features
-		for(int k = 0; k < TILE_WIDTH; ++k){
-		    val += in[ty][k] * weight[k][tx];
+		for(int n = 0; n < TILE_WIDTH; ++n){
+			// Not coalesed read; want in[n][tx] * weight[n][ty] so we read row by row
+			val += in[tx][n] * weight[ty][n];
 		}
 		__syncthreads();	
-		if(row < out_feature_num_p && col < in_node_num)
-        	    out_features[Row * in_node_num + Col] = val;
+		
 	}
-    	
-	if(relu)
+    	if(row < out_feature_num_p && col < in_node_num)
+		if(relu){
 			out_features[row * in_node_num + col] = MAX(0.00000, val);
+		}
+		else{
+			out_features[row * in_node_num + col] = val;
+		}
 
 }
 
