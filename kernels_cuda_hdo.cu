@@ -131,24 +131,26 @@ __global__ void combination_v1( float* &in_features, int in_feature_num, int in_
 	}
 	// Tiled Matrix Multiplication
 	for(int m = 0; m < (in_feature_num / TILED_SIZE); ++m){
-		if(m * TILE_WIDTH + tx < numAColumns && Row < numARows)
-		    in[ty][tx] = in_features[Row * numAColumns + m * TILE_WIDTH + tx];
+		// Read in from global memory to shared memory
+		if(m * TILE_WIDTH + tx < in_node_num && Row < in_feature_num_p)
+		    in[ty][tx] = in_features[Row * in_feature_num_p + m * TILE_WIDTH + tx];
 		else
 		    in[ty][tx] = 0.0f;
 		
-		if( m * TILE_WIDTH + ty < numBRows && Col < numBColumns)
-		    weight[ty][tx] = B[((m * TILE_WIDTH + ty) * numBColumns + Col)];
+		if( m * TILE_WIDTH + ty < out_feature_num_p && Col < in_feature_num_p)
+		    weight[ty][tx] = B[((m * TILE_WIDTH + ty) * in_feature_num_p + Col)];
 		else
 		    weight[ty][tx] = 0.0f;
 		__syncthreads();
-
+		// ith column of in with jth column of weight is the (j,i) of the out_features
 		for(int k = 0; k < TILE_WIDTH; ++k){
 		    val += in[ty][k] * weight[k][tx];
 		}
-		__syncthreads();		
+		__syncthreads();	
+		if(row < out_feature_num_p && col < in_node_num)
+        	    out_features[Row * in_node_num + Col] = val;
 	}
-    	if(Row < numCRows && Col < numCColumns)
-        	out_features[Row * in_node_num + Col] = val;
+    	
 	if(relu)
 			out_features[row * in_node_num + col] = MAX(0.00000, val);
 
