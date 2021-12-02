@@ -72,14 +72,14 @@ __global__ void combination_v0( float* &in_features, int &in_feature_num, int &i
 	// K will work like the TILESIZE in matrix multiplication?
 	--------------------Not for v0---------------
 	*/
-	// TILESIZE == blocksize == 16
+	// TILED_SIZE == blocksize == 16
 	int col = blockIdx.x * TILED_SIZE + threadIdx.x;
     	int row = blockIdx.y * TILED_SIZE + threadIdx.y;
 	
 	// Single read in of biases, no need for shared mem
 	out_features[row * out_node_num + col] =  biases[row];
 			 
-	if( row < numRow && col < numCol){
+	if( row < out_feature_num && col < in_node_num){
 		// Consider matrix kernel multiplication methods, since we can read in whole rows at a time
 		for(int k = 0; k < in_feature_num_p; ++l){
 			// atomic add for future versions
@@ -94,7 +94,7 @@ __global__ void combination_v0( float* &in_features, int &in_feature_num, int &i
 }
 
 // combination_v1 will start reading in the variables from global to shared
-__global__ void combination_v1( float* &in_features, int &in_feature_num, int &in_node_num, //feature_t in_feature
+__global__ void combination_v1( float* &in_features, int in_feature_num, int in_node_num, //feature_t in_feature
 			     float* &out_features, int &out_feature_num, int &out_node_num, //feature_t out_feature
 			     float* &biases, float* &weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
 			     bool relu){
@@ -109,34 +109,48 @@ __global__ void combination_v1( float* &in_features, int &in_feature_num, int &i
 	out_node_num = in_node_num;
 	//out_feature_c.features = (float**) malloc (parameter_c.out_feature_num * sizeof(float*));
 	
-	/*
-	--------------------Not for v0---------------
-	__shared__ out_features [numRow][numCol];
+	int bx = blockIdx.x;
+	int by = blockIdx.y;
+	int tx = threadIdx.x;
+	int ty = threadIdx.y;
+	
+	int k = in_feature_num;
 	// in-feature will be read in # row times in the overall combination
-	__shared__ in_features [k][numCol];
+	__shared__ in [TILED_SIZE][TILED_SIZE];
 	// parameter will be called # column number of times
-	__shared__ features [k][numRow];
+	__shared__ weight [TILED_SIZE][TILED_SIZE];
 	// K will work like the TILESIZE in matrix multiplication?
-	--------------------Not for v0---------------
-	*/
+
 	// TILESIZE == blocksize == 16
 	int col = blockIdx.x * TILED_SIZE + threadIdx.x;
     	int row = blockIdx.y * TILED_SIZE + threadIdx.y;
 	
-	// Single read in of biases, no need for shared mem
-	out_features[row * out_node_num + col] =  biases[row];
-			 
-	if( row < numRow && col < numCol){
-		// Consider matrix kernel multiplication methods, since we can read in whole rows at a time
-		for(int k = 0; k < in_feature_num_p; ++l){
-			// atomic add for future versions
-			out_features[row * out_node_num + col] += in_features[k * out_node_num + col] * weights[k * out_node_num + row];
-		}
-		__syncthreads();
-		if(relu)
-			out_features[row * out_node_num + col] = MAX(0.00000, out_features[row * out_node_num + col]);
-		
+	// initialize with biases
+	if( row < out_feature_num && col < in_node_num){
+		out_features[row * out_node_num + col] =  biases[row];
 	}
+	// Tiled Matrix Multiplication
+	for(int m = 0; m < (in_feature_num / TILED_SIZE); ++m){
+		if(m * TILE_WIDTH + tx < numAColumns && Row < numARows)
+		    in[ty][tx] = in_features[Row * numAColumns + m * TILE_WIDTH + tx];
+		else
+		    in[ty][tx] = 0.0f;
+		
+		if( m * TILE_WIDTH + ty < numBRows && Col < numBColumns)
+		    weight[ty][tx] = B[((m * TILE_WIDTH + ty) * numBColumns + Col)];
+		else
+		    weight[ty][tx] = 0.0f;
+		__syncthreads();
+
+		for(int k = 0; k < TILE_WIDTH; ++k){
+		    val += in[ty][k] * weight[k][tx];
+		}
+		__syncthreads();		
+	}
+    	if(Row < numCRows && Col < numCColumns)
+        	out_features[Row * in_node_num + Col] = val;
+	if(relu)
+			out_features[row * in_node_num + col] = MAX(0.00000, val);
 
 }
 
