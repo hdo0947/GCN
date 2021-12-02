@@ -132,13 +132,13 @@ __global__ void combination_v1( float* &in_features, int in_feature_num, int in_
 	// Tiled Matrix Multiplication
 	for(int m = 0; m < (in_feature_num / TILED_SIZE); ++m){
 		// Read in from global memory to shared memory
-		if(m * TILE_WIDTH + tx < in_node_num && Row < in_feature_num_p)
+		if(m * TILE_WIDTH + tx < in_node_num && row < in_feature_num_p)
 		    in[ty][tx] = in_features[Row * in_feature_num_p + m * TILE_WIDTH + tx];
 		else
 		    in[ty][tx] = 0.0f;
 		
-		if( m * TILE_WIDTH + ty < out_feature_num_p && Col < in_feature_num_p)
-		    weight[ty][tx] = B[((m * TILE_WIDTH + ty) * in_feature_num_p + Col)];
+		if( m * TILE_WIDTH + ty < out_feature_num_p && col < in_feature_num_p)
+		    weight[ty][tx] = weights[((m * TILE_WIDTH + ty) * in_feature_num_p + Col)];
 		else
 		    weight[ty][tx] = 0.0f;
 		__syncthreads();
