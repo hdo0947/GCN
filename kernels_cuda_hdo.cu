@@ -75,7 +75,7 @@ __global__ void combination_v0( float* in_features, int in_feature_num, int in_n
 }
 
 // combination_v1 will start reading in the variables from global to shared
-__global__ void combination_v0( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
+__global__ void combination_v1( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
 			     float* out_features, //feature_t out_feature
 			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
 			     bool relu){
@@ -87,40 +87,39 @@ __global__ void combination_v0( float* in_features, int in_feature_num, int in_n
 	__shared__ in [TILED_SIZE][TILED_SIZE];
 	// parameter will be called # column number of times
 	__shared__ weight [TILED_SIZE][TILED_SIZE];
-	// K will work like the TILESIZE in matrix multiplication?
-
-	// TILESIZE == blocksize == 16
-	int col = blockIdx.x * TILED_SIZE + threadIdx.x;
-    	int row = blockIdx.y * TILED_SIZE + threadIdx.y;
+	
+	// x is out feature num
+	// y is node dimension
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;
 	
 	// initialize with biases
-	if( row < out_feature_num_p && col < in_node_num){
-		out_features[row * in_node_num + col] =  biases[row];
+	if( index_x < out_feature_num_p && index_y < in_node_num){
+		out_features[index_x * in_node_num + index_y] =  biases[index_x];
 	}
 	// Tiled Matrix Multiplication
 	for(int m = 0; m < (in_feature_num_p / flaot(TILED_SIZE)); ++m){
 		// Read in from global memory to shared memory
 		if(m * TILE_WIDTH + tx < in_node_num && row < in_feature_num_p)
-		    in[ty][tx] = in_features[((m * TILE_WIDTH + ty) * in_node_num + col)];
+		    in[ty][tx] = in_features[((m * TILE_WIDTH + ty) * in_node_num + index_y)];
 		else
 		    in[ty][tx] = 0.0f;
 		
 		if( m * TILE_WIDTH + ty < out_feature_num_p && col < in_feature_num_p)
-		    weight[ty][tx] = weights[((m * TILE_WIDTH + ty) * out_feature_num_p + col)];
+		    weight[ty][tx] = weights[((m * TILE_WIDTH + ty) * out_feature_num_p + index_x)];
 		else
 		    weight[ty][tx] = 0.0f;
 		__syncthreads();
 		// ith column of in with jth column of weight is the (j,i) of the out_features
 		for(int n = 0; n < TILE_WIDTH; ++n){
-			// Not coalesed read; want in[n][tx] * weight[n][ty] so we read row by row
-			val += in[n][tx] * weight[n][ty];
+			val += in[n][ty] * weight[n][tx];
 		}
 		__syncthreads();	
 		
 	}
-    	if(row < out_feature_num_p && col < in_node_num)
+    	if(index_x < out_feature_num_p && index_y < in_node_num)
 		if(relu){
-			out_features[row * in_node_num + col] = MAX(0.00000, val + out_features[row * in_node_num + col]);
+			out_features[index_x * in_node_num + index_y] = MAX(0.00000, val + out_features[index_x * in_node_num + index_y]);
 		}
 		else{
 			out_features[row * in_node_num + col] += val;
