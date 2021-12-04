@@ -4,7 +4,7 @@ feature_t aggregation (graph_t graph_c, feature_t in_feature_c) {
 	int i, k, j;
 	feature_t out_feature_c;
 
-	printf("AGGREGATION: A[%d][%d] * X[%d][%d] = X'[%d][%d]\n", in_feature_c.node_num, in_feature_c.node_num, in_feature_c.node_num, in_feature_c.feature_num, in_feature_c.node_num, in_feature_c.feature_num);
+	printf("AGGREGATION:  X[%d][%d] * A[%d][%d] = X'[%d][%d]\n", in_feature_c.node_num, in_feature_c.node_num, in_feature_c.feature_num, in_feature_c.node_num, in_feature_c.feature_num, in_feature_c.node_num);
 	
 	// Same number of features for IN and OUT
 	out_feature_c.feature_num = in_feature_c.feature_num;
@@ -55,7 +55,7 @@ feature_t combination (feature_t in_feature_c, parameter_t parameter_c, bool rel
     	exit(-1);
 	}
 
-	printf("COMBINATION: X'[%d][%d] * W[%d][%d] = X[%d][%d]\n", in_feature_c.node_num, in_feature_c.feature_num, parameter_c.in_feature_num, parameter_c.out_feature_num, in_feature_c.node_num, parameter_c.out_feature_num);
+	printf("COMBINATION: X'[%d][%d] * W[%d][%d] = X[%d][%d]\n", in_feature_c.feature_num,  in_feature_c.node_num, parameter_c.in_feature_num, parameter_c.out_feature_num,   parameter_c.out_feature_num ,in_feature_c.node_num);
 	
 	// Same number of nodes, features and allocation of memory
 	out_feature_c.node_num = in_feature_c.node_num;
