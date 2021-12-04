@@ -17,6 +17,65 @@ __global__ void aggregation_cuda_v0(float* inputfeature, float* outputfeature, i
 	} 
 }
 
+__global__ void combination_v0( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
+			     float* out_features, int out_feature_num, int out_node_num, //feature_t out_feature
+			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
+			     bool relu){
+						 
+	// Keep the same checks as before
+	if (in_feature_num != in_feature_num_p) {
+    	printf("ERROR: Incompatible number of features in feature (%d) and parameter (%d) objects!\n", in_feature_num, in_feature_num_p);
+    	// exit(-1);
+	}
+	// set values of the out_feature_c
+	out_feature_num = out_feature_num_p;
+	out_node_num = in_node_num;
+
+	int bx = blockIdx.x; int by = blockIdx.y;
+	int tx = threadIdx.x; int ty = threadIdx.y; 
+	// x is out feature num
+	// y is node dimension 
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;
+
+	// Single read in of biases, no need for shared mem
+	
+			 
+	if( index_y < out_feature_num && index_x < in_node_num){
+		// printf("hi\n");
+		out_features[index_y * out_feature_num + index_x] =  biases[index_y];
+		// Consider matrix kernel multiplication methods, since we can read in whole index_ys at a time
+		float val = 0.0f;
+		for(int k = 0; k < in_feature_num_p; ++k){
+			// atomic add for future versions
+			val += in_features[k * out_feature_num + index_x] * weights[k * out_feature_num + index_y];
+		}
+		out_features[index_y * out_feature_num + index_x] += val;
+		__syncthreads();
+		if(relu)
+			out_features[index_y * out_feature_num + index_x] = MAX(0.00000, out_features[index_y * out_feature_num + index_x]);
+			// out_features[index_y * out_node_num + index_x] = fmaxf(0.00000, out_features[index_y * out_node_num + index_x]);
+	}
+	__syncthreads();
+
+}
+
+// __global__ void combination_v0( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
+// 			     float* out_features, int out_feature_num, int out_node_num, //feature_t out_feature
+// 			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
+// 			     bool relu){
+// 	int bx = blockIdx.x; int by = blockIdx.y;
+// 	int tx = threadIdx.x; int ty = threadIdx.y; 
+// 	// x is feature dimension
+// 	// y is node dimension 
+// 	int index_x = bx * TILED_SIZE + tx;	
+// 	int index_y = by * TILED_SIZE + ty;
+// 	if (index_x == 0 && index_y  == 16 ){
+// 		printf("1111111111111111111111the device weight is \n");
+// 	}
+// }
+
+
 __global__ void analyzer_cuda_v0(float* inputfeature, int* label, int feature_num, int node_num, int* correctness){
 	int bx = blockIdx.x; int by = blockIdx.y;
 	int tx = threadIdx.x; int ty = threadIdx.y; 
@@ -61,6 +120,7 @@ bool verified_feature(float* feature_device, float** feature_host_true, int feat
 	}
 	return true;
 }
+
 void convert2DarrayTo1Darray(float** input, float* output, int x_length, int y_length){
 	for (int x = 0; x < x_length; ++ x){
 		for (int y = 0 ; y < y_length ; ++ y){
@@ -77,11 +137,11 @@ int main(int argc, char const *argv[]) {
 	}
 	GCN_t GCN_c = GCN_parser((char*)argv[1]);
 	float* inputfeatures_device;
-	float* outputfeatures_device;
+	float* outputfeatures_agg1_device;
 	int* indexes_deivce;
 	int* neighbours_device;
 	cudaMalloc((float**)&inputfeatures_device, sizeof(float) * GCN_c.feature_c.feature_num * GCN_c.feature_c.node_num);
-	cudaMalloc((float**)&outputfeatures_device, sizeof(float) * GCN_c.feature_c.feature_num * GCN_c.feature_c.node_num);
+	cudaMalloc((float**)&outputfeatures_agg1_device, sizeof(float) * GCN_c.feature_c.feature_num * GCN_c.feature_c.node_num);
 	cudaMalloc((int**)&indexes_deivce, sizeof(int) * (GCN_c.spec_c.nodes + 1));
 	cudaMalloc((int**)&neighbours_device, sizeof(int) * (GCN_c.spec_c.edges));
 	float* features = (float*) malloc(GCN_c.feature_c.node_num * GCN_c.feature_c.feature_num * sizeof(float));
@@ -102,7 +162,7 @@ int main(int argc, char const *argv[]) {
   	dim3 blockDim(TILED_SIZE, TILED_SIZE);
 	
 	auto started = std::chrono::high_resolution_clock::now();
-	aggregation_cuda_v0<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_device, 
+	aggregation_cuda_v0<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
 												indexes_deivce, neighbours_device, 
 												GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, GCN_c.spec_c.edges);
 	cudaDeviceSynchronize();
@@ -118,19 +178,66 @@ int main(int argc, char const *argv[]) {
 	printf("Time cost for CPU version of fisrt aggregation is %d nanoseconds. \n\n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
 
 	std::cout << "The GPU version v0 of aggregation result is " << 
-			  verified_feature(outputfeatures_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
+			  verified_feature(outputfeatures_agg1_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
 			  << std::endl;
 	
 	/////////////////////////// Test first combination //////////////////////////////////////
 
 	// CUDA version
 	// TODO
+	
+	float* outputfeatures_comb1_device;
+	float* biases_comb1_device;
+	float* weights_comb1_device;
+	cudaMalloc((float**)&outputfeatures_comb1_device, sizeof(float) * GCN_c.l1_parameter_c.out_feature_num * GCN_c.feature_c.node_num);
+	cudaMalloc((float**)&biases_comb1_device, sizeof(float) * GCN_c.l1_parameter_c.out_feature_num);
+	cudaMalloc((float**)&weights_comb1_device, sizeof(float) * GCN_c.l1_parameter_c.out_feature_num * GCN_c.l1_parameter_c.in_feature_num);
+	float* weights_comb1 = (float*) malloc(GCN_c.l1_parameter_c.out_feature_num * GCN_c.l1_parameter_c.in_feature_num * sizeof(float));
+
+	convert2DarrayTo1Darray(GCN_c.l1_parameter_c.weights, weights_comb1, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num);
+
+	cudaMemcpy(biases_comb1_device, GCN_c.l1_parameter_c.biasses, sizeof(float) * GCN_c.l1_parameter_c.out_feature_num, cudaMemcpyHostToDevice);
+	cudaMemcpy(weights_comb1_device, weights_comb1, sizeof(float) * GCN_c.l1_parameter_c.out_feature_num * GCN_c.l1_parameter_c.in_feature_num, cudaMemcpyHostToDevice);
+
+	// for (int i = 0; i < GCN_c.l1_parameter_c.in_feature_num; i ++){
+	// 	for (int j = 0; j < GCN_c.l1_parameter_c.out_feature_num; j ++){
+	// 		printf("for the index i = %d, j = %d, the value is: %f \n", i, j, GCN_c.l1_parameter_c.weights[i][j]);
+	// 	}
+	// }
+	printf("for the index i = %d, j = %d, the value is: %f \n", 9, 9, GCN_c.l1_parameter_c.weights[9][9]);
+
+	gridDim = dim3(int(ceil(GCN_c.l1_parameter_c.out_feature_num/float(TILED_SIZE))),
+				 int(ceil(GCN_c.feature_c.node_num/float(TILED_SIZE)))
+				 );
+  	blockDim = dim3(TILED_SIZE, TILED_SIZE);
+
+	printf("out_feature_num is %d \n", GCN_c.l1_parameter_c.out_feature_num);
+	printf("Dim grid is x:%d, y: %d \n", gridDim.x, gridDim.y);
+
+	started = std::chrono::high_resolution_clock::now();
+	// combination_v0<<<gridDim, blockDim>>>(outputfeatures_agg1_device, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
+	// 									outputfeatures_comb1_device, GCN_c.l1_parameter_c.out_feature_num, GCN_c.feature_c.node_num, //feature_t out_feature
+	// 									biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
+	// 									true);
+	combination_v0<<<gridDim, blockDim>>>(outputfeatures_agg1_device, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
+										outputfeatures_comb1_device, GCN_c.l1_parameter_c.out_feature_num, GCN_c.feature_c.node_num, //feature_t out_feature
+										biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
+										true);
+	cudaDeviceSynchronize();
+	done = std::chrono::high_resolution_clock::now();	
+	printf("Time cost for CPU version of fisrt combination is %d nanoseconds. \n\n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
+
 
 	// CPU version
 	started = std::chrono::high_resolution_clock::now();
 	feature_c = combination(feature_c, GCN_c.l1_parameter_c, true);
 	done = std::chrono::high_resolution_clock::now();
 	printf("Time cost for CPU version of fisrt combination is %d nanoseconds. \n\n", std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count());
+
+	std::cout << "The GPU version v0 of combination result is " << 
+			  verified_feature(outputfeatures_comb1_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
+			  << std::endl;	
+
 
 	/////////////////////////// Test Analyzer //////////////////////////////////////
 	int* correctness;
