@@ -81,10 +81,12 @@ __global__ void combination_v0( float* &in_features, int &in_feature_num, int &i
 			 
 	if( row < out_feature_num && col < in_node_num){
 		// Consider matrix kernel multiplication methods, since we can read in whole rows at a time
+		float val = 0.0f;
 		for(int k = 0; k < in_feature_num_p; ++l){
 			// atomic add for future versions
-			out_features[row * out_node_num + col] += in_features[k * out_node_num + col] * weights[k * out_node_num + row];
+			val += in_features[k * out_node_num + col] * weights[k * out_node_num + row];
 		}
+		out_features[row * out_node_num + col] = val;
 		__syncthreads();
 		if(relu)
 			out_features[row * out_node_num + col] = MAX(0.00000, out_features[row * out_node_num + col]);
