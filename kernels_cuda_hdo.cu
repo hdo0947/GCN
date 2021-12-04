@@ -80,10 +80,8 @@ __global__ void combination_v0( float* in_features, int in_feature_num, int in_n
 			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
 			     bool relu){
 	
-	int bx = blockIdx.x;
-	int by = blockIdx.y;
-	int tx = threadIdx.x;
-	int ty = threadIdx.y;
+	int bx = blockIdx.x;	int by = blockIdx.y;
+	int tx = threadIdx.x;	int ty = threadIdx.y;
 	
 	// in-feature will be read in # row times in the overall combination
 	__shared__ in [TILED_SIZE][TILED_SIZE];
@@ -103,12 +101,12 @@ __global__ void combination_v0( float* in_features, int in_feature_num, int in_n
 	for(int m = 0; m < (in_feature_num_p / flaot(TILED_SIZE)); ++m){
 		// Read in from global memory to shared memory
 		if(m * TILE_WIDTH + tx < in_node_num && row < in_feature_num_p)
-		    in[ty][tx] = in_features[((m * TILE_WIDTH + ty) * in_node_num + tx)];
+		    in[ty][tx] = in_features[((m * TILE_WIDTH + ty) * in_node_num + col)];
 		else
 		    in[ty][tx] = 0.0f;
 		
 		if( m * TILE_WIDTH + ty < out_feature_num_p && col < in_feature_num_p)
-		    weight[ty][tx] = weights[((m * TILE_WIDTH + ty) * out_feature_num_p + tx)];
+		    weight[ty][tx] = weights[((m * TILE_WIDTH + ty) * out_feature_num_p + col)];
 		else
 		    weight[ty][tx] = 0.0f;
 		__syncthreads();
