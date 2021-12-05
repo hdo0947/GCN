@@ -75,7 +75,7 @@ __global__ void combination_v0( float* in_features, int in_feature_num, int in_n
 }
 
 // combination_v1 will start reading in the variables from global to shared
-__global__ void combination_v0( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
+__global__ void combination_v1( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
 			     float* out_features, //feature_t out_feature
 			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
 			     bool relu){
