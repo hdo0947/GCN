@@ -48,33 +48,44 @@ feature_t aggregation (graph_t graph_c, feature_t in_feature_c) {
 // CUDA CODE FOR THIS SECTION
 // The features and parpameters are dismantled so they can be read in for CUDA
 __global__ void combination_v0( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
-			     float* out_features, //feature_t out_feature
-			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
-			     bool relu){
+								float* out_features, //feature_t out_feature
+								float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
+								bool relu){				 
+	// Keep the same checks as before
+	if (in_feature_num != in_feature_num_p) {
+    	printf("ERROR: Incompatible number of features in feature (%d) and parameter (%d) objects!\n", in_feature_num, in_feature_num_p);
+    	// exit(-1);
+	}
+	// set values of the out_feature_c
+	int bx = blockIdx.x; int by = blockIdx.y;
+	int tx = threadIdx.x; int ty = threadIdx.y; 
+	// x is out feature num
+	// y is node dimension
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;
 
-	int col = blockIdx.x * TILED_SIZE + threadIdx.x;
-    	int row = blockIdx.y * TILED_SIZE + threadIdx.y;
-	
-	if( row < out_feature_num_p && col < in_node_num){
-		out_features[row * in_node_num + col] =  biases[row];
-		
+	// Single read in of biases, no need for shared mem
+	if( index_y < in_node_num && index_x < out_feature_num_p ){
+		out_features[index_x * in_node_num + index_y] =  biases[index_x];
+
 		float val = 0.0f;
 		for(int k = 0; k < in_feature_num_p; ++k){
 			// atomic add for future versions
-			val += in_features[k * in_node_num + col] * weights[k * in_node_num + row];
+			val += in_features[k * in_node_num + index_y] * weights[k * out_feature_num_p + index_x];
 		}
-		out_features[row * out_node_num + col] += val;
+		out_features[index_x * in_node_num + index_y] += val;
 		__syncthreads();
-		
-		if(relu)
-			out_features[row * in_node_num + col] = MAX(0.00000, out_features[row * in_node_num + col]);
-		
+		if(relu){
+			out_features[index_x * in_node_num + index_y] = MAX(0.00000, out_features[index_x * in_node_num + index_y]);
+		}
 	}
-	__syncthreads():
-
+	__syncthreads();
 }
 
+<<<<<<< HEAD
 // combination_v1 will start reading in the variables from global to shared
+=======
+>>>>>>> 75c058c700c3d2ca684d709d4376db1124b0bee4
 __global__ void combination_v1( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
 			     float* out_features, //feature_t out_feature
 			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
@@ -84,114 +95,104 @@ __global__ void combination_v1( float* in_features, int in_feature_num, int in_n
 	int tx = threadIdx.x;	int ty = threadIdx.y;
 	
 	// in-feature will be read in # row times in the overall combination
-	__shared__ in [TILED_SIZE][TILED_SIZE];
+	__shared__ float in [TILED_SIZE][TILED_SIZE];
 	// parameter will be called # column number of times
-	__shared__ weight [TILED_SIZE][TILED_SIZE];
-	// K will work like the TILESIZE in matrix multiplication?
-
-	// TILESIZE == blocksize == 16
-	int col = blockIdx.x * TILED_SIZE + threadIdx.x;
-    	int row = blockIdx.y * TILED_SIZE + threadIdx.y;
+	__shared__ float weight [TILED_SIZE][TILED_SIZE];
+	
+	// x is out feature num
+	// y is node dimension
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;
 	
 	// initialize with biases
-	if( row < out_feature_num_p && col < in_node_num){
-		out_features[row * in_node_num + col] =  biases[row];
+	if( index_y < in_node_num && index_x < out_feature_num_p ){
+		out_features[index_x * in_node_num + index_y] =  biases[index_x];
 	}
 	// Tiled Matrix Multiplication
-	for(int m = 0; m < (in_feature_num_p / flaot(TILED_SIZE)); ++m){
+	float val = 0.0f;
+	for(int m = 0; m < (in_feature_num_p / float(TILED_SIZE)); ++m){
 		// Read in from global memory to shared memory
-		if(m * TILE_WIDTH + tx < in_node_num && row < in_feature_num_p)
-		    in[ty][tx] = in_features[((m * TILE_WIDTH + ty) * in_node_num + col)];
+		if(m * TILED_SIZE + tx < in_feature_num_p && index_y < in_node_num)
+			in[tx][ty] = in_features[((m * TILED_SIZE + tx) * in_node_num + index_y)];
 		else
-		    in[ty][tx] = 0.0f;
+			in[tx][ty] = 0.0f;
 		
-		if( m * TILE_WIDTH + ty < out_feature_num_p && col < in_feature_num_p)
-		    weight[ty][tx] = weights[((m * TILE_WIDTH + ty) * out_feature_num_p + col)];
+		if( m * TILED_SIZE + ty < in_feature_num_p && index_x < out_feature_num_p)
+			weight[ty][tx] = weights[((m * TILED_SIZE + ty) * out_feature_num_p + index_x)];
 		else
-		    weight[ty][tx] = 0.0f;
+			weight[ty][tx] = 0.0f;
 		__syncthreads();
 		// ith column of in with jth column of weight is the (j,i) of the out_features
-		for(int n = 0; n < TILE_WIDTH; ++n){
-			// Not coalesed read; want in[n][tx] * weight[n][ty] so we read row by row
-			val += in[n][tx] * weight[n][ty];
+		for(int k = 0; k < TILED_SIZE; ++k){
+			val += in[k][ty] * weight[k][tx];
 		}
 		__syncthreads();	
 		
 	}
-    	if(row < out_feature_num_p && col < in_node_num)
-		if(relu){
-			out_features[row * in_node_num + col] = MAX(0.00000, val + out_features[row * in_node_num + col]);
-		}
-		else{
-			out_features[row * in_node_num + col] += val;
-		}
+// 	if(index_x == 16 && index_y == 0){
+// 			printf("Something is wrong here: bias and val is %f %f \n", out_features[index_x * in_node_num + index_y], val);
+// 		}
+	__syncthreads();
+	if(relu && index_y < in_node_num && index_x < out_feature_num_p){
+		out_features[index_x * in_node_num + index_y] = MAX(0.00000, out_features[index_x * in_node_num + index_y]);
+	}
 
 }
 
 
-// combination_v1 will start reading in the variables from global to shared
-__global__ void combination_v2( float* &in_features, int in_feature_num, int in_node_num, //feature_t in_feature
-			     float* &out_features, int &out_feature_num, int &out_node_num, //feature_t out_feature
-			     float* &biases, float* &weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
+// combination_v2 will have the biases in const memory
+__global__ void combination_v2( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
+			     float* out_features, //feature_t out_feature
+			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
 			     bool relu){
-
-	// Keep the same checks as before
-	if (in_feature_num != in_feature_num_p) {
-    		printf("ERROR: Incompatible number of features in feature (%d) and parameter (%d) objects!\n", in_feature_num, in_feature_num_p);
-    		exit(-1);
-	}
-	// set values of the out_feature_c
-	out_feature_num = out_feature_num_p;
-	out_node_num = in_node_num;
-	//out_feature_c.features = (float**) malloc (parameter_c.out_feature_num * sizeof(float*));
 	
-	int bx = blockIdx.x;
-	int by = blockIdx.y;
-	int tx = threadIdx.x;
-	int ty = threadIdx.y;
+	int bx = blockIdx.x;	int by = blockIdx.y;
+	int tx = threadIdx.x;	int ty = threadIdx.y;
 	
 	// in-feature will be read in # row times in the overall combination
-	__shared__ in [TILED_SIZE][TILED_SIZE];
+	__shared__ float in [TILED_SIZE][TILED_SIZE];
 	// parameter will be called # column number of times
-	__shared__ weight [TILED_SIZE][TILED_SIZE];
-	// K will work like the TILESIZE in matrix multiplication?
-
-	// TILESIZE == blocksize == 16
-	int col = blockIdx.x * TILED_SIZE + threadIdx.x;
-    	int row = blockIdx.y * TILED_SIZE + threadIdx.y;
+	__shared__ float weight [TILED_SIZE][TILED_SIZE];
+	// biases will be called in_node_num times for each
+	__cost__ float bias[out_feature_num_p];
+	// x is out feature num
+	// y is node dimension
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;
 	
+	if( index_x < out_feature_num_p){
+		bias[index_x] = biases[index_x]
+	}
 	// initialize with biases
-	if( row < out_feature_num && col < in_node_num){
-		out_features[row * out_node_num + col] =  biases[row];
+	if( index_y < in_node_num && index_x < out_feature_num_p ){
+		out_features[index_x * in_node_num + index_y] =  bias[index_x];
 	}
 	// Tiled Matrix Multiplication
-	for(int m = 0; m < (in_feature_num / TILED_SIZE); ++m){
+	float val = 0.0f;
+	for(int m = 0; m < (in_feature_num_p / float(TILED_SIZE)); ++m){
 		// Read in from global memory to shared memory
-		if(m * TILE_WIDTH + tx < in_node_num && row < in_feature_num_p)
-		    in[tx][ty] = in_features[Row * in_feature_num_p + m * TILE_WIDTH + tx];
+		if(m * TILED_SIZE + tx < in_feature_num_p && index_y < in_node_num)
+			in[tx][ty] = in_features[((m * TILED_SIZE + tx) * in_node_num + index_y)];
 		else
-		    in[tx][ty] = 0.0f;
+			in[tx][ty] = 0.0f;
 		
-		if( m * TILE_WIDTH + ty < out_feature_num_p && col < in_feature_num_p)
-		    weight[ty][tx] = weights[((m * TILE_WIDTH + ty) * in_feature_num_p + Col)];
+		if( m * TILED_SIZE + ty < in_feature_num_p && index_x < out_feature_num_p)
+			weight[ty][tx] = weights[((m * TILED_SIZE + ty) * out_feature_num_p + index_x)];
 		else
-		    weight[ty][tx] = 0.0f;
+			weight[ty][tx] = 0.0f;
 		__syncthreads();
 		// ith column of in with jth column of weight is the (j,i) of the out_features
-		for(int n = 0; n < TILE_WIDTH; ++n){
-			// Not coalesed read; want in[n][tx] * weight[n][ty] so we read row by row
-			val += in[tx][n] * weight[ty][n];
+		for(int k = 0; k < TILED_SIZE; ++k){
+			val += in[k][ty] * weight[k][tx];
 		}
 		__syncthreads();	
 		
 	}
-    	if(row < out_feature_num_p && col < in_node_num)
-		if(relu){
-			out_features[row * in_node_num + col] = MAX(0.00000, val);
-		}
-		else{
-			out_features[row * in_node_num + col] = val;
-		}
+	out_features[index_x * in_node_num + index_y] += val;
+	__syncthreads();
+	if(relu && index_y < in_node_num && index_x < out_feature_num_p){
+		out_features[index_x * in_node_num + index_y] = MAX(0.00000, out_features[index_x * in_node_num + index_y]);
+	}
 
 }
 

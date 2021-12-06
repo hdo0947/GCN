@@ -2,7 +2,10 @@
 
 #define TILED_SIZE 16
 #define TILED_SIZE_agg_cuda_v1 1024
-#define MAX_LENGTH_NEIGHBOUR_agg_cuda_v1 3312
+#define MAX_LENGTH_NEIGHBOUR_agg_cuda_v1 1024
+#define TILED_SIZE_agg_cuda_v3 1024
+#define MAX_RAW_agg_cuda_v3 40
+#define MAX_LENGTH_BIAS_comb_cuda_v2 128
 
 // A Parallel SpMV/CSR version Kernel
 __global__ void aggregation_cuda_v0(float* inputfeature, float* outputfeature, int* indexes, int* neighbours, int feature_num, int node_num, int edge_num) {
@@ -12,6 +15,7 @@ __global__ void aggregation_cuda_v0(float* inputfeature, float* outputfeature, i
 	// y is node dimension 
 	int index_x = bx * TILED_SIZE + tx;	
 	int index_y = by * TILED_SIZE + ty;
+
 	if (index_x < feature_num && index_y < node_num){
 		for (int j = indexes[index_y]; j < indexes[index_y + 1]; ++j) {
 			outputfeature[index_x * node_num + index_y] += inputfeature[index_x * node_num + neighbours[j]];
@@ -35,21 +39,85 @@ __global__ void aggregation_cuda_v1(float* inputfeature, float* outputfeature, i
 	int neighbour_index_end = indexes[index_y + 1];
 	int total_neighbours = neighbour_index_end - neighbour_index_start;
 
+	// About 0.1% of time
 	for (int i = 0; i < total_neighbours; i+= feature_num){
 		int load_neighbour_index = i + tx;
 		if( load_neighbour_index < total_neighbours){
 			neighbours_shared[load_neighbour_index] = neighbours[load_neighbour_index + neighbour_index_start];
 		}
 	}
+	// Main cost of time
 	__syncthreads();
 	if (index_x < feature_num && index_y < node_num){
-		outputfeature[index_x * node_num + index_y] = 0;
+		float val= 0.0f;
 		for (int j = 0; j < total_neighbours; ++j) {
-			outputfeature[index_x * node_num + index_y] += inputfeature[index_x * node_num + neighbours_shared[j]];
+			val += inputfeature[index_x * node_num + neighbours_shared[j]];
 		}	
-		outputfeature[index_x * node_num + index_y] /= (float)total_neighbours;
+		outputfeature[index_x * node_num + index_y] = val/(float)total_neighbours;
+		// outputfeature[index_x * node_num + index_y] = ;
 	}
 }
+
+__global__ void aggregation_cuda_v2(float* inputfeature, float* outputfeature, float* ELL_value, int* ELL_row, int feature_num, int node_num, int ELL_row_num) {
+	int bx = blockIdx.x; int by = blockIdx.y;
+	int tx = threadIdx.x; int ty = threadIdx.y; 
+	// x is feature dimension
+	// y is node dimension 
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;
+	if (index_x < feature_num && index_y < node_num){
+		float sum = 0.0f;
+		for (int i = 0; i < ELL_row_num; ++i) {
+			sum += inputfeature[index_x * node_num + ELL_row[i * node_num + index_y]] * ELL_value[i * node_num + index_y];
+		}
+		outputfeature[index_x * node_num+ index_y] = sum;
+	} 
+}
+
+__global__ void aggregation_cuda_v3_ELL(float* inputfeature, float* outputfeature, float* ELL_value, int* ELL_row, int feature_num, int node_num, int ELL_row_num) {
+	int bx = blockIdx.x; int by = blockIdx.y;
+	int tx = threadIdx.x; int ty = threadIdx.y; 
+	// x is feature dimension
+	// y is node dimension 
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;
+	if (index_x < feature_num && index_y < node_num){
+		float sum = 0.0f;
+		for (int i = 0; i < ELL_row_num; ++i) {
+			sum += inputfeature[index_x * node_num + ELL_row[i * node_num + index_y]] * ELL_value[i * node_num + index_y];
+		}
+		outputfeature[index_x * node_num+ index_y] = sum;
+	} 
+}
+
+__global__ void aggregation_cuda_v3_COO(float* inputfeature, float* outputfeature, 
+										int feature_num, int node_num,
+										float* Hybrid_COO_value, int* Hybrid_COO_row, int* Hybrid_COO_col,
+										int Hybrid_COO_length) {
+	int bx = blockIdx.x; 
+	int tx = threadIdx.x; 
+	// x is feature dimension
+	int index_x = bx * TILED_SIZE_agg_cuda_v3 + tx;	
+	__shared__ int Hybrid_COO_col_shared [TILED_SIZE_agg_cuda_v3];
+	__shared__ int Hybrid_COO_row_shared [TILED_SIZE_agg_cuda_v3];
+	__shared__ float Hybrid_COO_value_shared [TILED_SIZE_agg_cuda_v3];
+
+	if (tx < Hybrid_COO_length){
+		Hybrid_COO_col_shared[tx] = Hybrid_COO_col[tx];
+		Hybrid_COO_row_shared[tx] = Hybrid_COO_row[tx];
+		Hybrid_COO_value_shared[tx] = Hybrid_COO_value[tx];
+	}
+	__syncthreads();
+
+	if (index_x < feature_num){
+		for (int i = 0; i < Hybrid_COO_length; ++i) {
+			outputfeature[index_x * node_num+ Hybrid_COO_col_shared[i]] += inputfeature[index_x * node_num+ Hybrid_COO_row_shared[i]]  * Hybrid_COO_value_shared[i];
+		}
+	} 
+}
+
+
+
 
 __global__ void combination_v0( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
 								float* out_features, //feature_t out_feature
@@ -140,6 +208,68 @@ __global__ void combination_v1( float* in_features, int in_feature_num, int in_n
 
 }
 
+
+__global__ void combination_v2( float* in_features, int in_feature_num, int in_node_num, //feature_t in_feature
+			     float* out_features, //feature_t out_feature
+			     float* biases, float* weights, int in_feature_num_p, int out_feature_num_p, //parameter_t
+			     bool relu){
+	
+	int bx = blockIdx.x;	int by = blockIdx.y;
+	int tx = threadIdx.x;	int ty = threadIdx.y;
+	
+	// in-feature will be read in # row times in the overall combination
+	__shared__ float in [TILED_SIZE][TILED_SIZE];
+	// parameter will be called # column number of times
+	__shared__ float weight [TILED_SIZE][TILED_SIZE];
+	//
+	__shared__ float bias[MAX_LENGTH_BIAS_comb_cuda_v2];
+	// x is out feature num
+	// y is node dimension
+	int index_x = bx * TILED_SIZE + tx;	
+	int index_y = by * TILED_SIZE + ty;
+
+	__syncthreads();
+	// initialize with biases
+	if(index_x < out_feature_num_p){
+		bias[index_x] = biases[index_x];
+	}
+
+	if( index_y < in_node_num && index_x < out_feature_num_p ){
+		out_features[index_x * in_node_num + index_y] =  bias[index_x];
+	}
+	
+	// Tiled Matrix Multiplication
+	float val = 0.0f;
+	for(int m = 0; m < (in_feature_num_p / float(TILED_SIZE)); ++m){
+		// Read in from global memory to shared memory
+		if(m * TILED_SIZE + tx < in_feature_num_p && index_y < in_node_num)
+			in[tx][ty] = in_features[((m * TILED_SIZE + tx) * in_node_num + index_y)];
+		else
+			in[tx][ty] = 0.0f;
+		
+		if( m * TILED_SIZE + ty < in_feature_num_p && index_x < out_feature_num_p)
+			weight[ty][tx] = weights[((m * TILED_SIZE + ty) * out_feature_num_p + index_x)];
+		else
+			weight[ty][tx] = 0.0f;
+		__syncthreads();
+		// ith column of in with jth column of weight is the (j,i) of the out_features
+		for(int k = 0; k < TILED_SIZE; ++k){
+			val += in[k][ty] * weight[k][tx];
+		}
+		__syncthreads();	
+		
+	}
+	if(index_x == 16 && index_y == 0){
+		printf("Something is wrong here: bias and val is %f %f \n", out_features[index_x * in_node_num + index_y], val);
+	}
+	out_features[index_x * in_node_num + index_y] += val;
+	__syncthreads();
+	if(relu && index_y < in_node_num && index_x < out_feature_num_p){
+		out_features[index_x * in_node_num + index_y] = MAX(0.00000, out_features[index_x * in_node_num + index_y]);
+	}
+
+}
+
 __global__ void analyzer_cuda_v0(float* inputfeature, int* label, int feature_num, int node_num, int* correctness){
 	int bx = blockIdx.x; int by = blockIdx.y;
 	int tx = threadIdx.x; int ty = threadIdx.y; 
@@ -195,6 +325,62 @@ void convert2DarrayTo1Darray(float** input, float* output, int x_length, int y_l
 			// printf("%f\n", output[x * y_length + y]);
 		}	
 	}
+}
+
+void convertSparseToELLFormat(int* indexes, int* neighbours, 
+							  int feature_num, int node_num, int edge_num, int ELL_format_row,
+							  float* ELL_value, int* ELL_row){
+
+	for(int i = 0; i < node_num ; ++i){
+		int adj_node_num = indexes[i + 1] - indexes[i];
+		for(int j = 0; j < adj_node_num; ++j){
+			ELL_value[node_num * j + i] = float(1)/adj_node_num;
+			ELL_row[node_num * j + i] = neighbours[indexes[i] + j];
+		}
+	}
+}
+
+void convertSparseToHybridFormat(int* indexes, int* neighbours, 
+								 int feature_num, int node_num, int edge_num, 
+							     float* Hybrid_ELL_value, int* Hybrid_ELL_row,
+								 int Hybrid_ELL_row_num,
+								 float* Hybrid_COO_value, int* Hybrid_COO_row, int* Hybrid_COO_col,
+								 int Hybrid_COO_length){
+	int index_COO = 0;
+	for(int i = 0; i < node_num ; ++i){
+		int adj_node_num = indexes[i + 1] - indexes[i];
+		for(int j = 0; j < Hybrid_ELL_row_num; ++j){
+			if (j < adj_node_num){
+				Hybrid_ELL_value[node_num * j + i] = float(1)/adj_node_num;
+				Hybrid_ELL_row[node_num * j + i] = neighbours[indexes[i] + j];
+			}
+		} 
+		if (adj_node_num > Hybrid_ELL_row_num){
+			for(int j = Hybrid_ELL_row_num; j < adj_node_num; ++j){
+				Hybrid_COO_value[index_COO] = float(1)/adj_node_num;
+				Hybrid_COO_row[index_COO] = neighbours[indexes[i] + j];
+				Hybrid_COO_col[index_COO] = i;
+				index_COO += 1;
+			}
+		}
+	}
+
+	// for (int i = 0; i < node_num; ++ i){
+	// 	for (int j = 0; j < Hybrid_ELL_row_num; ++ j){
+	// 		if (Hybrid_ELL_value[node_num * 0 + i] < 0.1){
+	// 			printf("%f ", Hybrid_ELL_value[node_num * j + i]);
+	// 		}
+	// 	}
+	// 	if (Hybrid_ELL_value[node_num * 0 + i] < 0.1){
+	// 		printf("\n");
+	// 	}
+	// }
+
+	// for (int i = 0; i < Hybrid_COO_length; ++ i){
+	// 	printf("For the value, %f, its row is %d, its col is %d\n", Hybrid_COO_value[i], Hybrid_COO_row[i], Hybrid_COO_col[i]);
+	// }
+
+	// printf("!!!!!!!!!!!!!!!!!!!%d\n", index_COO);
 }
 
 int main(int argc, char const *argv[]) {
@@ -263,6 +449,120 @@ int main(int argc, char const *argv[]) {
 			  << std::endl;
 	printf("Time cost for GPU v1 of fisrt aggregation is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v1, float(time_CPU_agg)/time_GPU_agg_v1);
 	
+	
+	int ELL_row_num = 0;
+	for(int i = 0; i < GCN_c.feature_c.node_num ; ++i){
+		if(ELL_row_num < GCN_c.graph_c.indexes[i + 1] - GCN_c.graph_c.indexes[i]){
+			ELL_row_num = GCN_c.graph_c.indexes[i + 1] - GCN_c.graph_c.indexes[i];
+		}
+	}
+	float* ELL_value; // 
+	int* ELL_row ;
+	ELL_value = (float*) malloc(GCN_c.feature_c.node_num * ELL_row_num * sizeof(float));
+	ELL_row = (int*) malloc(GCN_c.feature_c.node_num * ELL_row_num * sizeof(int));
+	convertSparseToELLFormat(GCN_c.graph_c.indexes, GCN_c.graph_c.neighbours, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, GCN_c.spec_c.edges, ELL_row_num,
+							 ELL_value, ELL_row);
+	float* ELL_value_device; 
+	int* ELL_row_device;
+	cudaMalloc((float**)&ELL_value_device, sizeof(float) * ELL_row_num * GCN_c.feature_c.node_num);
+	cudaMalloc((int**)&ELL_row_device, sizeof(int) * ELL_row_num * GCN_c.feature_c.node_num);
+	cudaMemcpy(ELL_value_device, ELL_value, sizeof(float) * ELL_row_num * GCN_c.feature_c.node_num, cudaMemcpyHostToDevice);
+	cudaMemcpy(ELL_row_device, ELL_row, sizeof(int) * ELL_row_num * GCN_c.feature_c.node_num, cudaMemcpyHostToDevice);
+	gridDim = dim3(int(ceil(GCN_c.feature_c.feature_num/float(TILED_SIZE))),
+				 int(ceil(GCN_c.feature_c.node_num/float(TILED_SIZE)))
+				 );
+  	blockDim = dim3(TILED_SIZE, TILED_SIZE);
+	
+	started = std::chrono::high_resolution_clock::now();
+	aggregation_cuda_v2<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
+											   ELL_value_device, ELL_row_device, 
+											   GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, ELL_row_num);
+	cudaDeviceSynchronize();
+	done = std::chrono::high_resolution_clock::now();
+	
+	int time_GPU_agg_v2 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+
+	std::cout << "The GPU version v2 of aggregation result is " << 
+			  verified_feature(outputfeatures_agg1_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
+			  << std::endl;
+	printf("Time cost for GPU v2 of fisrt aggregation is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v2, float(time_CPU_agg)/time_GPU_agg_v2);
+	
+
+
+	int Hybrid_ELL_row_num = MAX_RAW_agg_cuda_v3;
+	int Hybrid_COO_length = 0;
+	for(int i = 0; i < GCN_c.feature_c.node_num ; ++i){
+		if(Hybrid_ELL_row_num < GCN_c.graph_c.indexes[i + 1] - GCN_c.graph_c.indexes[i]){
+			Hybrid_COO_length += GCN_c.graph_c.indexes[i + 1] - GCN_c.graph_c.indexes[i] - Hybrid_ELL_row_num;
+		}
+	}
+
+	printf("For the GPU version v3 of aggregation (Hybrid version),  the ELL format has the row num %d, the COO format has the length %d.\n", 
+			Hybrid_ELL_row_num, Hybrid_COO_length);
+	float* Hybrid_ELL_value; // Hybrid_ELL_row_num X node_num
+	int* Hybrid_ELL_row ;
+	Hybrid_ELL_value = (float*) malloc(GCN_c.feature_c.node_num * Hybrid_ELL_row_num * sizeof(float));
+	Hybrid_ELL_row = (int*) malloc(GCN_c.feature_c.node_num * Hybrid_ELL_row_num * sizeof(int));
+	
+	float* Hybrid_COO_value; // Hybrid_COO_length
+	int* Hybrid_COO_row ;	
+	int* Hybrid_COO_col ;	
+	Hybrid_COO_value = (float*) malloc(Hybrid_COO_length * sizeof(float));
+	Hybrid_COO_row = (int*) malloc(Hybrid_COO_length * sizeof(int));	
+	Hybrid_COO_col = (int*) malloc(Hybrid_COO_length * sizeof(int));
+	convertSparseToHybridFormat(GCN_c.graph_c.indexes, GCN_c.graph_c.neighbours, 
+								GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, GCN_c.spec_c.edges, 
+								Hybrid_ELL_value, Hybrid_ELL_row,
+								Hybrid_ELL_row_num,
+								Hybrid_COO_value, Hybrid_COO_row, Hybrid_COO_col,
+								Hybrid_COO_length);
+
+	float* Hybrid_ELL_value_device; 
+	float* Hybrid_COO_value_device;
+	int* Hybrid_ELL_row_device;
+	int* Hybrid_COO_row_device;
+	int* Hybrid_COO_col_device;
+	cudaMalloc((float**)&Hybrid_ELL_value_device, sizeof(float) * Hybrid_ELL_row_num * GCN_c.feature_c.node_num);
+	cudaMalloc((int**)&Hybrid_ELL_row_device, sizeof(int) * Hybrid_ELL_row_num * GCN_c.feature_c.node_num);
+
+	cudaMalloc((float**)&Hybrid_COO_value_device, sizeof(float) * Hybrid_COO_length);
+	cudaMalloc((int**)&Hybrid_COO_row_device, sizeof(int) * Hybrid_COO_length);
+	cudaMalloc((int**)&Hybrid_COO_col_device, sizeof(int) * Hybrid_COO_length);
+	cudaMemcpy(Hybrid_ELL_value_device, Hybrid_ELL_value, sizeof(float) * Hybrid_ELL_row_num * GCN_c.feature_c.node_num, cudaMemcpyHostToDevice);
+	cudaMemcpy(Hybrid_ELL_row_device, Hybrid_ELL_row, sizeof(int) * Hybrid_ELL_row_num * GCN_c.feature_c.node_num, cudaMemcpyHostToDevice);
+	cudaMemcpy(Hybrid_COO_value_device, Hybrid_COO_value, sizeof(float) * Hybrid_COO_length, cudaMemcpyHostToDevice);
+	cudaMemcpy(Hybrid_COO_row_device, Hybrid_COO_row, sizeof(int) * Hybrid_COO_length, cudaMemcpyHostToDevice);
+	cudaMemcpy(Hybrid_COO_col_device, Hybrid_COO_col, sizeof(int) * Hybrid_COO_length, cudaMemcpyHostToDevice);
+	gridDim = dim3(int(ceil(GCN_c.feature_c.feature_num/float(TILED_SIZE))),
+				 int(ceil(GCN_c.feature_c.node_num/float(TILED_SIZE)))
+				 );
+  	blockDim = dim3(TILED_SIZE, TILED_SIZE);
+	
+	dim3 gridDim_COO(int(ceil(GCN_c.feature_c.feature_num/float(TILED_SIZE_agg_cuda_v3))));
+  	dim3 blockDim_COO(TILED_SIZE_agg_cuda_v3);
+
+	started = std::chrono::high_resolution_clock::now();
+	aggregation_cuda_v3_ELL<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
+											   Hybrid_ELL_value_device, Hybrid_ELL_row_device, 
+											   GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, Hybrid_ELL_row_num);
+	
+	cudaDeviceSynchronize();
+	aggregation_cuda_v3_COO<<<gridDim_COO, blockDim_COO>>>(inputfeatures_device, outputfeatures_agg1_device, 
+															GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, 
+															Hybrid_COO_value_device, Hybrid_COO_row_device, Hybrid_COO_col_device,
+															Hybrid_COO_length);
+	cudaDeviceSynchronize();
+	done = std::chrono::high_resolution_clock::now();
+	
+	int time_GPU_agg_v3 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+
+	std::cout << "The GPU version v3 of aggregation result is " << 
+			  verified_feature(outputfeatures_agg1_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
+			  << std::endl;
+	printf("Time cost for GPU v3 of fisrt aggregation is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v3, float(time_CPU_agg)/time_GPU_agg_v3);
+	
+	
+	
 	/////////////////////////// Test first combination //////////////////////////////////////
 
 	// CPU version
@@ -320,6 +620,21 @@ int main(int argc, char const *argv[]) {
 			<< std::endl;	
 	printf("Time cost for GPU v1 of fisrt combination is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_comb_v1, float(time_CPU_comb)/time_GPU_comb_v1);
 
+
+	started = std::chrono::high_resolution_clock::now();
+
+	combination_v2<<<gridDim, blockDim>>>(outputfeatures_agg1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
+										outputfeatures_comb1_device, //feature_t out_feature
+										biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
+										true);
+	cudaDeviceSynchronize();
+	done = std::chrono::high_resolution_clock::now();
+	int time_GPU_comb_v2 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();	
+	
+	std::cout << "The GPU version v2 of combination result is " << 
+			verified_feature(outputfeatures_comb1_device, feature_c.features, GCN_c.l1_parameter_c.out_feature_num, GCN_c.feature_c.node_num) 
+			<< std::endl;	
+	printf("Time cost for GPU v2 of fisrt combination is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_comb_v2, float(time_CPU_comb)/time_GPU_comb_v2);
 
 
 
