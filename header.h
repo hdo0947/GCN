@@ -10,7 +10,7 @@
 #include <sys/types.h>
 #include <ctime>
 #include <chrono>
-
+#include <math.h> 
 
 #define DEBUG false
 #define DATASET_DIR "/home/huijie/research/EECS598/GCN/GCN_data/"

@@ -6,9 +6,11 @@
 #define TILED_SIZE_agg_cuda_v3 1024
 #define MAX_RAW_agg_cuda_v3 40
 #define MAX_LENGTH_BIAS_comb_cuda_v2 128
-
+#define TEST_NUM 1
 // A Parallel SpMV/CSR version Kernel
-__global__ void aggregation_cuda_v0(float* inputfeature, float* outputfeature, int* indexes, int* neighbours, int feature_num, int node_num, int edge_num) {
+__global__ void aggregation_cuda_v0(float* inputfeature, float* outputfeature, 
+									int* indexes, int* neighbours, 
+									int feature_num, int node_num, int edge_num) {
 	int bx = blockIdx.x; int by = blockIdx.y;
 	int tx = threadIdx.x; int ty = threadIdx.y; 
 	// x is feature dimension
@@ -17,10 +19,13 @@ __global__ void aggregation_cuda_v0(float* inputfeature, float* outputfeature, i
 	int index_y = by * TILED_SIZE + ty;
 
 	if (index_x < feature_num && index_y < node_num){
+		outputfeature[index_x * node_num+ index_y] = 0;
 		for (int j = indexes[index_y]; j < indexes[index_y + 1]; ++j) {
-			outputfeature[index_x * node_num + index_y] += inputfeature[index_x * node_num + neighbours[j]];
+			outputfeature[index_x * node_num + index_y] += 
+					inputfeature[index_x * node_num + neighbours[j]];
 		}
-		outputfeature[index_x * node_num+ index_y] /= (float)(indexes[index_y + 1] - indexes[index_y]);
+		outputfeature[index_x * node_num+ index_y] /= 
+					(float)(indexes[index_y + 1] - indexes[index_y]);
 	} 
 }
 
@@ -365,23 +370,26 @@ void convertSparseToHybridFormat(int* indexes, int* neighbours,
 		}
 	}
 
-	// for (int i = 0; i < node_num; ++ i){
-	// 	for (int j = 0; j < Hybrid_ELL_row_num; ++ j){
-	// 		if (Hybrid_ELL_value[node_num * 0 + i] < 0.1){
-	// 			printf("%f ", Hybrid_ELL_value[node_num * j + i]);
-	// 		}
-	// 	}
-	// 	if (Hybrid_ELL_value[node_num * 0 + i] < 0.1){
-	// 		printf("\n");
-	// 	}
-	// }
-
-	// for (int i = 0; i < Hybrid_COO_length; ++ i){
-	// 	printf("For the value, %f, its row is %d, its col is %d\n", Hybrid_COO_value[i], Hybrid_COO_row[i], Hybrid_COO_col[i]);
-	// }
-
-	// printf("!!!!!!!!!!!!!!!!!!!%d\n", index_COO);
 }
+
+class time_calculator{
+	public:
+		int time[TEST_NUM];
+	float CalculateMean(){
+        float sum = 0;
+        for(int i = 0; i < TEST_NUM; i++)
+            sum += (float)time[i];
+        return (sum / TEST_NUM);
+    }
+	float CalculateVar(){
+		float mean = CalculateMean();
+        float temp = 0;
+        for(int i = 0; i < TEST_NUM; i++){
+             temp += (float)(time[i] - mean) * (time[i] - mean) ;
+        }
+        return sqrt(temp/TEST_NUM);
+    }
+};
 
 int main(int argc, char const *argv[]) {
 	if ((argc != 2) || ((strcmp(argv[1], "cora") != 0) && (strcmp(argv[1], "citeseer") != 0) && (strcmp(argv[1], "reddit") != 0))) {
@@ -409,45 +417,57 @@ int main(int argc, char const *argv[]) {
 	/////////////////////////// Test first aggregation //////////////////////////////////////
 	// CPU version
 	feature_t feature_c;
-	auto started = std::chrono::high_resolution_clock::now();
-	feature_c = aggregation(GCN_c.graph_c, GCN_c.feature_c);
-	auto done = std::chrono::high_resolution_clock::now();
-	int time_CPU_agg = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
-
+	time_calculator time_CPU_agg;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
+		feature_c = aggregation(GCN_c.graph_c, GCN_c.feature_c);
+		auto done = std::chrono::high_resolution_clock::now();
+		time_CPU_agg.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
+	
 	// CUDA version
 	dim3 gridDim(int(ceil(GCN_c.feature_c.feature_num/float(TILED_SIZE))),
 				 int(ceil(GCN_c.feature_c.node_num/float(TILED_SIZE)))
 				 );
   	dim3 blockDim(TILED_SIZE, TILED_SIZE);
 	
-	started = std::chrono::high_resolution_clock::now();
-	aggregation_cuda_v0<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
-												indexes_deivce, neighbours_device, 
-												GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, GCN_c.spec_c.edges);
-	cudaDeviceSynchronize();
-	done = std::chrono::high_resolution_clock::now();
-	
-	int time_GPU_agg_v0 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	time_calculator time_GPU_agg_v0;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
+		aggregation_cuda_v0<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
+													indexes_deivce, neighbours_device, 
+													GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, GCN_c.spec_c.edges);
+		cudaDeviceSynchronize();
+		auto done = std::chrono::high_resolution_clock::now();
+		
+		time_GPU_agg_v0.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
+
 
 	std::cout << "The GPU version v0 of aggregation result is " << 
 			  verified_feature(outputfeatures_agg1_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
 			  << std::endl;
-	printf("Time cost for GPU v0 of fisrt aggregation is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v0, float(time_CPU_agg)/time_GPU_agg_v0);
+	printf("Time cost for GPU v0 of fisrt aggregation is %f nanoseconds with var %f, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v0.CalculateMean(), time_GPU_agg_v0.CalculateVar(), time_CPU_agg.CalculateMean()/time_GPU_agg_v0.CalculateMean());
 	
 	gridDim = dim3(int(ceil(GCN_c.feature_c.feature_num /float(TILED_SIZE_agg_cuda_v1))) * GCN_c.feature_c.node_num );
   	blockDim = dim3(TILED_SIZE_agg_cuda_v1);
 	// printf("The gridDim is : %d, the blockDim is : %d \n\n\n\n.", gridDim.x, blockDim.x);
-	started = std::chrono::high_resolution_clock::now();  
-	aggregation_cuda_v1<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
-												indexes_deivce, neighbours_device, 
-												GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, GCN_c.spec_c.edges);
-	cudaDeviceSynchronize();
-	done = std::chrono::high_resolution_clock::now();
-	int time_GPU_agg_v1 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+
+	time_calculator time_GPU_agg_v1;
+	for(int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();  
+		aggregation_cuda_v1<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
+													indexes_deivce, neighbours_device, 
+													GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, GCN_c.spec_c.edges);
+		cudaDeviceSynchronize();
+		auto done = std::chrono::high_resolution_clock::now();
+		time_GPU_agg_v1.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
+
 	std::cout << "The GPU version v1 of aggregation result is " << 
 			  verified_feature(outputfeatures_agg1_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
 			  << std::endl;
-	printf("Time cost for GPU v1 of fisrt aggregation is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v1, float(time_CPU_agg)/time_GPU_agg_v1);
+	printf("Time cost for GPU v1 of fisrt aggregation is %f nanoseconds, the varance is %f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v1.CalculateMean(), time_GPU_agg_v1.CalculateVar(), time_CPU_agg.CalculateMean()/time_GPU_agg_v1.CalculateMean());
 	
 	
 	int ELL_row_num = 0;
@@ -456,7 +476,7 @@ int main(int argc, char const *argv[]) {
 			ELL_row_num = GCN_c.graph_c.indexes[i + 1] - GCN_c.graph_c.indexes[i];
 		}
 	}
-	float* ELL_value; // 
+	float* ELL_value; 
 	int* ELL_row ;
 	ELL_value = (float*) malloc(GCN_c.feature_c.node_num * ELL_row_num * sizeof(float));
 	ELL_row = (int*) malloc(GCN_c.feature_c.node_num * ELL_row_num * sizeof(int));
@@ -472,20 +492,23 @@ int main(int argc, char const *argv[]) {
 				 int(ceil(GCN_c.feature_c.node_num/float(TILED_SIZE)))
 				 );
   	blockDim = dim3(TILED_SIZE, TILED_SIZE);
-	
-	started = std::chrono::high_resolution_clock::now();
-	aggregation_cuda_v2<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
-											   ELL_value_device, ELL_row_device, 
-											   GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, ELL_row_num);
-	cudaDeviceSynchronize();
-	done = std::chrono::high_resolution_clock::now();
-	
-	int time_GPU_agg_v2 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	time_calculator time_GPU_agg_v2;
+	for (int i = 0; i < TEST_NUM; ++ i){
+		auto started = std::chrono::high_resolution_clock::now();
+		aggregation_cuda_v2<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
+												ELL_value_device, ELL_row_device, 
+												GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, ELL_row_num);
+		cudaDeviceSynchronize();
+		auto done = std::chrono::high_resolution_clock::now();
+		
+		time_GPU_agg_v2.time[i] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
+
 
 	std::cout << "The GPU version v2 of aggregation result is " << 
 			  verified_feature(outputfeatures_agg1_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
 			  << std::endl;
-	printf("Time cost for GPU v2 of fisrt aggregation is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v2, float(time_CPU_agg)/time_GPU_agg_v2);
+	printf("Time cost for GPU v2 of fisrt aggregation is %f nanoseconds, the variance is %f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v2.CalculateMean(), time_GPU_agg_v2.CalculateVar(), time_CPU_agg.CalculateMean()/time_GPU_agg_v2.CalculateMean());
 	
 
 
@@ -540,36 +563,42 @@ int main(int argc, char const *argv[]) {
 	
 	dim3 gridDim_COO(int(ceil(GCN_c.feature_c.feature_num/float(TILED_SIZE_agg_cuda_v3))));
   	dim3 blockDim_COO(TILED_SIZE_agg_cuda_v3);
+	time_calculator time_GPU_agg_v3;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
+		aggregation_cuda_v3_ELL<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
+												Hybrid_ELL_value_device, Hybrid_ELL_row_device, 
+												GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, Hybrid_ELL_row_num);
+		
+		cudaDeviceSynchronize();
+		aggregation_cuda_v3_COO<<<gridDim_COO, blockDim_COO>>>(inputfeatures_device, outputfeatures_agg1_device, 
+																GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, 
+																Hybrid_COO_value_device, Hybrid_COO_row_device, Hybrid_COO_col_device,
+																Hybrid_COO_length);
+		cudaDeviceSynchronize();
+		auto done = std::chrono::high_resolution_clock::now();
+		time_GPU_agg_v3.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
 
-	started = std::chrono::high_resolution_clock::now();
-	aggregation_cuda_v3_ELL<<<gridDim, blockDim>>>(inputfeatures_device, outputfeatures_agg1_device, 
-											   Hybrid_ELL_value_device, Hybrid_ELL_row_device, 
-											   GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, Hybrid_ELL_row_num);
 	
-	cudaDeviceSynchronize();
-	aggregation_cuda_v3_COO<<<gridDim_COO, blockDim_COO>>>(inputfeatures_device, outputfeatures_agg1_device, 
-															GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, 
-															Hybrid_COO_value_device, Hybrid_COO_row_device, Hybrid_COO_col_device,
-															Hybrid_COO_length);
-	cudaDeviceSynchronize();
-	done = std::chrono::high_resolution_clock::now();
-	
-	int time_GPU_agg_v3 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
-
 	std::cout << "The GPU version v3 of aggregation result is " << 
 			  verified_feature(outputfeatures_agg1_device, feature_c.features, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num) 
 			  << std::endl;
-	printf("Time cost for GPU v3 of fisrt aggregation is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v3, float(time_CPU_agg)/time_GPU_agg_v3);
+	printf("Time cost for GPU v3 of fisrt aggregation is %f nanoseconds, the variance is %f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_agg_v3.CalculateMean(), time_GPU_agg_v3.CalculateVar(), time_CPU_agg.CalculateMean()/time_GPU_agg_v3.CalculateMean());
 	
 	
 	
 	/////////////////////////// Test first combination //////////////////////////////////////
 
 	// CPU version
-	started = std::chrono::high_resolution_clock::now();
+	time_calculator time_CPU_comb;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
+		combination(feature_c, GCN_c.l1_parameter_c, true);
+		auto done = std::chrono::high_resolution_clock::now();
+		time_CPU_comb.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
 	feature_c = combination(feature_c, GCN_c.l1_parameter_c, true);
-	done = std::chrono::high_resolution_clock::now();
-	int time_CPU_comb = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
 
 	// CUDA version	
 	float* outputfeatures_comb1_device;
@@ -589,55 +618,112 @@ int main(int argc, char const *argv[]) {
 				 int(ceil(GCN_c.feature_c.node_num/float(TILED_SIZE)))
 				 );
   	blockDim = dim3(TILED_SIZE, TILED_SIZE);
+	time_calculator time_GPU_comb_v0;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
 
-	started = std::chrono::high_resolution_clock::now();
+		combination_v0<<<gridDim, blockDim>>>(outputfeatures_agg1_device, 
+											GCN_c.l1_parameter_c.in_feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
+											outputfeatures_comb1_device, //feature_t out_feature
+											biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
+											true);
+		cudaDeviceSynchronize();
+		auto done = std::chrono::high_resolution_clock::now();
+		time_GPU_comb_v0.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
 
-	combination_v0<<<gridDim, blockDim>>>(outputfeatures_agg1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
-										outputfeatures_comb1_device, //feature_t out_feature
-										biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
-										true);
-	cudaDeviceSynchronize();
-	done = std::chrono::high_resolution_clock::now();
-	int time_GPU_comb_v0 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
 
 	std::cout << "The GPU version v0 of combination result is " << 
 			verified_feature(outputfeatures_comb1_device, feature_c.features, GCN_c.l1_parameter_c.out_feature_num, GCN_c.feature_c.node_num) 
 			<< std::endl;	
-	printf("Time cost for GPU v0 of fisrt combination is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_comb_v0, float(time_CPU_comb)/time_GPU_comb_v0);
+	printf("Time cost for GPU v0 of fisrt combination is %f nanoseconds, the variance is %f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_comb_v0.CalculateMean(), time_GPU_comb_v0.CalculateVar(), float(time_CPU_comb.CalculateMean())/time_GPU_comb_v0.CalculateMean());
 
-	started = std::chrono::high_resolution_clock::now();
+	time_calculator time_GPU_comb_v1;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
 
-	combination_v1<<<gridDim, blockDim>>>(outputfeatures_agg1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
-										outputfeatures_comb1_device, //feature_t out_feature
-										biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
-										true);
-	cudaDeviceSynchronize();
-	done = std::chrono::high_resolution_clock::now();
-	int time_GPU_comb_v1 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();	
+		combination_v1<<<gridDim, blockDim>>>(outputfeatures_agg1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
+											outputfeatures_comb1_device, //feature_t out_feature
+											biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
+											true);
+		cudaDeviceSynchronize();
+		auto done = std::chrono::high_resolution_clock::now();
+		time_GPU_comb_v1.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();	
+	}	
+
 	
 	std::cout << "The GPU version v1 of combination result is " << 
 			verified_feature(outputfeatures_comb1_device, feature_c.features, GCN_c.l1_parameter_c.out_feature_num, GCN_c.feature_c.node_num) 
 			<< std::endl;	
-	printf("Time cost for GPU v1 of fisrt combination is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_comb_v1, float(time_CPU_comb)/time_GPU_comb_v1);
+	printf("Time cost for GPU v1 of fisrt combination is %f nanoseconds, the variance is %f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_comb_v1.CalculateMean(), time_GPU_comb_v1.CalculateVar(), float(time_CPU_comb.CalculateMean())/time_GPU_comb_v1.CalculateMean());
 
+	time_calculator time_GPU_comb_v2;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
 
-	started = std::chrono::high_resolution_clock::now();
+		combination_v2<<<gridDim, blockDim>>>(outputfeatures_agg1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
+											outputfeatures_comb1_device, //feature_t out_feature
+											biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
+											true);
+		cudaDeviceSynchronize();
+		auto done = std::chrono::high_resolution_clock::now();
+		time_GPU_comb_v2.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();	
+	}	
 
-	combination_v2<<<gridDim, blockDim>>>(outputfeatures_agg1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
-										outputfeatures_comb1_device, //feature_t out_feature
-										biases_comb1_device, weights_comb1_device, GCN_c.l1_parameter_c.in_feature_num, GCN_c.l1_parameter_c.out_feature_num, //parameter_t
-										true);
-	cudaDeviceSynchronize();
-	done = std::chrono::high_resolution_clock::now();
-	int time_GPU_comb_v2 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();	
 	
 	std::cout << "The GPU version v2 of combination result is " << 
 			verified_feature(outputfeatures_comb1_device, feature_c.features, GCN_c.l1_parameter_c.out_feature_num, GCN_c.feature_c.node_num) 
 			<< std::endl;	
-	printf("Time cost for GPU v2 of fisrt combination is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_comb_v2, float(time_CPU_comb)/time_GPU_comb_v2);
+	printf("Time cost for GPU v2 of fisrt combination is %f nanoseconds, the variance is %f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_comb_v2.CalculateMean(), time_GPU_comb_v2.CalculateVar(), float(time_CPU_comb.CalculateMean())/time_GPU_comb_v2.CalculateMean());
 
 
 
+	////// second aggregation part ////
+
+	feature_c = aggregation(GCN_c.graph_c, feature_c);
+	float* outputfeatures2_agg1_device;
+	cudaMalloc((float**)&outputfeatures2_agg1_device, sizeof(float) * GCN_c.l1_parameter_c.out_feature_num * GCN_c.feature_c.node_num);
+	gridDim = dim3(int(ceil(GCN_c.l1_parameter_c.out_feature_num/float(TILED_SIZE))),
+				 int(ceil(GCN_c.feature_c.node_num/float(TILED_SIZE)))
+				 );
+  	blockDim = dim3(TILED_SIZE, TILED_SIZE);	
+
+	aggregation_cuda_v0<<<gridDim, blockDim>>>(outputfeatures_comb1_device, outputfeatures2_agg1_device, 
+												indexes_deivce, neighbours_device, 
+												GCN_c.l1_parameter_c.out_feature_num, GCN_c.feature_c.node_num, GCN_c.spec_c.edges);
+	std::cout << "The GPU version v0 of second aggregation result is " << 
+			verified_feature(outputfeatures2_agg1_device, feature_c.features, GCN_c.l2_parameter_c.out_feature_num, GCN_c.feature_c.node_num) 
+			<< std::endl;		
+	
+	////// second combination part ////
+
+	float* outputfeatures2_comb_device;
+	float* biases2_comb_device;
+	float* weights2_comb_device;
+	cudaMalloc((float**)&outputfeatures2_comb_device, sizeof(float) * GCN_c.l2_parameter_c.out_feature_num * GCN_c.feature_c.node_num);
+	cudaMalloc((float**)&biases2_comb_device, sizeof(float) * GCN_c.l2_parameter_c.out_feature_num);
+	cudaMalloc((float**)&weights2_comb_device, sizeof(float) * GCN_c.l2_parameter_c.out_feature_num * GCN_c.l2_parameter_c.in_feature_num);
+	float* weights_comb2 = (float*) malloc(GCN_c.l2_parameter_c.out_feature_num * GCN_c.l2_parameter_c.in_feature_num * sizeof(float));
+
+	convert2DarrayTo1Darray(GCN_c.l2_parameter_c.weights, weights_comb2, GCN_c.l2_parameter_c.in_feature_num, GCN_c.l2_parameter_c.out_feature_num);
+	cudaMemcpy(biases2_comb_device, GCN_c.l2_parameter_c.biasses, sizeof(float) * GCN_c.l2_parameter_c.out_feature_num, cudaMemcpyHostToDevice);
+	cudaMemcpy(weights2_comb_device, weights_comb2, sizeof(float) * GCN_c.l2_parameter_c.out_feature_num * GCN_c.l2_parameter_c.in_feature_num, cudaMemcpyHostToDevice);
+	gridDim = dim3(int(ceil(GCN_c.l2_parameter_c.out_feature_num/float(TILED_SIZE))),
+				 int(ceil(GCN_c.feature_c.node_num/float(TILED_SIZE)))
+				 );
+  	blockDim = dim3(TILED_SIZE, TILED_SIZE);	
+
+	feature_c = combination(feature_c, GCN_c.l2_parameter_c, false);
+
+	combination_v2<<<gridDim, blockDim>>>(outputfeatures2_agg1_device, 
+										GCN_c.l2_parameter_c.in_feature_num, GCN_c.feature_c.node_num, //feature_t in_feature
+										outputfeatures2_comb_device, //feature_t out_feature
+										biases2_comb_device, weights2_comb_device, GCN_c.l2_parameter_c.in_feature_num, GCN_c.l2_parameter_c.out_feature_num, //parameter_t
+										false);
+	std::cout << "The GPU version v0 of second combination result is " << 
+			verified_feature(outputfeatures2_comb_device, feature_c.features, GCN_c.l2_parameter_c.out_feature_num, GCN_c.feature_c.node_num, false) 
+			<< std::endl;		
+	
 	/////////////////////////// Test Analyzer //////////////////////////////////////
 	int* correctness;
 	int* label_device;
@@ -645,21 +731,27 @@ int main(int argc, char const *argv[]) {
 	cudaMalloc((int**)&label_device, sizeof(int) * GCN_c.feature_c.node_num);
 	cudaMemcpy(label_device, GCN_c.label_c, sizeof(int) * GCN_c.feature_c.node_num, cudaMemcpyHostToDevice);
 	// CUDA version
-	started = std::chrono::high_resolution_clock::now();
-	analyzer_cuda_v0<<<gridDim, blockDim>>>(inputfeatures_device, 
-											label_device, GCN_c.feature_c.feature_num, GCN_c.feature_c.node_num, 
-											correctness);
-	cudaDeviceSynchronize();
-	done = std::chrono::high_resolution_clock::now();
-	int time_GPU_ana_v0 = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
-
+	time_calculator time_GPU_ana_v0;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
+		analyzer_cuda_v0<<<gridDim, blockDim>>>(outputfeatures2_comb_device, 
+												label_device, GCN_c.l2_parameter_c.out_feature_num, GCN_c.feature_c.node_num, 
+												correctness);
+		cudaDeviceSynchronize();
+		auto done = std::chrono::high_resolution_clock::now();
+		time_GPU_ana_v0.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
 
 
 	// CPU version
-	started = std::chrono::high_resolution_clock::now();
-	analyzer(feature_c, GCN_c.label_c);
-	done = std::chrono::high_resolution_clock::now();
-	int time_CPU_ana = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
-	printf("Time cost for GPU v0 of fisrt analyzer is %d nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_ana_v0, time_CPU_ana/float(time_GPU_ana_v0));
+	time_calculator time_CPU_ana;
+	for (int num = 0; num < TEST_NUM; num ++){
+		auto started = std::chrono::high_resolution_clock::now();
+		analyzer(feature_c, GCN_c.label_c);
+		auto done = std::chrono::high_resolution_clock::now();
+		time_CPU_ana.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
+	}
+
+	printf("Time cost for GPU v0 of fisrt analyzer is %f nanoseconds, the variance is %f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_ana_v0.CalculateMean(), time_GPU_ana_v0.CalculateVar(), time_CPU_ana.CalculateMean()/float(time_GPU_ana_v0.CalculateMean()));
 	return 0;
 }
