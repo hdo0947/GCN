@@ -421,6 +421,8 @@ int main(int argc, char const *argv[]) {
 		auto done = std::chrono::high_resolution_clock::now();
 		time_CPU_agg.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
 	}
+
+	printf("Time cost for CPU of fisrt aggregation is %.2f nanoseconds \n\n", time_CPU_agg.CalculateMean());
 	
 	// CUDA version
 	dim3 gridDim(int(ceil(GCN_c.feature_c.feature_num/float(TILED_SIZE))),
@@ -596,6 +598,8 @@ int main(int argc, char const *argv[]) {
 		time_CPU_comb.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
 	}
 	feature_c = combination(feature_c, GCN_c.l1_parameter_c, true);
+
+	printf("Time cost for CPU of fisrt combination is %.2f nanoseconds \n\n", time_CPU_comb.CalculateMean());
 
 	// CUDA version	
 	float* outputfeatures_comb1_device;
@@ -850,7 +854,8 @@ int main(int argc, char const *argv[]) {
 		auto done = std::chrono::high_resolution_clock::now();
 		time_CPU_ana.time[num] = std::chrono::duration_cast<std::chrono::nanoseconds>(done-started).count();
 	}
+	printf("Time cost for CPU of analyzer is %.2f nanoseconds \n\n", time_CPU_ana.CalculateMean());
 
-	printf("Time cost for GPU v0 of fisrt analyzer is %.2f nanoseconds, the variance is %.2f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_ana_v0.CalculateMean(), time_GPU_ana_v0.CalculateVar(), time_CPU_ana.CalculateMean()/float(time_GPU_ana_v0.CalculateMean()));
+	printf("Time cost for GPU v0 of analyzer is %.2f nanoseconds, the variance is %.2f nanoseconds, which is %f tims faster than the CPU version. \n\n", time_GPU_ana_v0.CalculateMean(), time_GPU_ana_v0.CalculateVar(), time_CPU_ana.CalculateMean()/float(time_GPU_ana_v0.CalculateMean()));
 	return 0;
 }
