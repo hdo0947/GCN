@@ -13,8 +13,7 @@
 #include <math.h> 
 
 #define DEBUG false
-#define DATASET_DIR "/home/huijie/research/EECS598/GCN/GCN_data/"
-// #define DATASET_DIR "/home/yuzren/Desktop/GCN/GCN_data/"
+#define DATASET_DIR "./GCN_data/"
 #define MIN(X, Y) (((X) < (Y)) ? (X) : (Y))
 #define MAX(X, Y) (((X) < (Y)) ? (Y) : (X))
 
