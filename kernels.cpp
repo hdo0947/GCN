@@ -26,8 +26,8 @@ feature_t aggregation (graph_t graph_c, feature_t in_feature_c) {
 	
 	// Triple for loop from node 0 to N
 	for (i = 0; i < in_feature_c.node_num; ++i) {
-		printf("\r%.2f%% Completed!", (float)i * 100.00 / (float)in_feature_c.node_num);
-	    fflush(stdout);
+		// printf("\r%.2f%% Completed!", (float)i * 100.00 / (float)in_feature_c.node_num);
+	    // fflush(stdout);
 		
 		// Double for loop setting the values of the out_feature nodes
 		// Number of Features 
@@ -69,8 +69,8 @@ feature_t combination (feature_t in_feature_c, parameter_t parameter_c, bool rel
 
 	// Same optimization process could be applied as aggregation
 	for (i = 0; i < in_feature_c.node_num; ++i) {
-		printf("\r%.2f%% Completed!", (float)i * 100.00 / (float)in_feature_c.node_num);
-	    fflush(stdout);
+		// printf("\r%.2f%% Completed!", (float)i * 100.00 / (float)in_feature_c.node_num);
+	    // fflush(stdout);
 		for (j = 0; j < parameter_c.out_feature_num; ++j) {
 			out_feature_c.features[j][i] = parameter_c.biasses[j];
 			// Unlike aggregation, no division afterword needed
