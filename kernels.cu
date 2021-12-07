@@ -209,9 +209,6 @@ __global__ void combination_v1( float* in_features, int in_feature_num, int in_n
 		__syncthreads();	
 		
 	}
-	if(index_x == 16 && index_y == 0){
-		printf("Something is wrong here: bias and val is %f %f \n", out_features[index_x * in_node_num + index_y], val);
-	}
 	out_features[index_x * in_node_num + index_y] += val;
 	__syncthreads();
 	if(relu && index_y < in_node_num && index_x < out_feature_num_p){
@@ -270,9 +267,6 @@ __global__ void combination_v2( float* in_features, int in_feature_num, int in_n
 		}
 		__syncthreads();	
 		
-	}
-	if(index_x == 16 && index_y == 0){
-		printf("Something is wrong here: bias and val is %f %f \n", out_features[index_x * in_node_num + index_y], val);
 	}
 	out_features[index_x * in_node_num + index_y] += val;
 	__syncthreads();
