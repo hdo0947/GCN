@@ -1,5 +1,5 @@
 # GCN
-Graph Covolutional Network C implementation
+Graph Covolutional Network GPU implementation, the code is running on local computer instead of greatlakes.
 
 1) Clone the repository:
 ```bash
